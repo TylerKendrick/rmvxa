@@ -2,7 +2,7 @@
 #===============================================================================
 Author:     Tyler Kendrick
 Title:      Kendrick - Core
-Version:    v1.1.0
+Version:    v1.1.1
 
 Language:   RGSS3
 Framework:  RPG Maker VX Ace
@@ -122,23 +122,22 @@ module Kendrick
     module Script
       @@dependencies = []
       
-      def self.Dependencies
-        return @@dependencies
-      end
-  
-      def self.Dependencies=(value)
-        @@dependencies = value
-      end
-      
-      def self.resolve_dependencies
-        remaining = @@dependencies - $imported.keys.select { |x| $imported[x] }
-        if !(remaining.nil? || remaining.empty?)
-          names = remaining.join(", ")
-          message = "The following scripts were required, but not found: { #{names} }"
-          raise ::StandardError.new(message)
+      class << self
+        def Dependencies(values = nil)
+          @@dependencies = (@@dependencies + values).uniq if !values.nil?
+          return @@dependencies
+        end
+        
+        def resolve_dependencies
+          remaining = @@dependencies - $imported.keys.select { |x| $imported[x] }
+          if !(remaining.nil? || remaining.empty?)
+            names = remaining.join(", ")
+            message = "The following scripts were required, but not found: { #{names} }"
+            raise ::StandardError.new(message)
+          end
         end
       end
-    end # Kendrick::Core::Script    
+    end # Kendrick::Core::Script
     #===========================================================================
     # Note: This module exists as a helper object to clean text for parsing with
     # my Regex::Tags regular expression.  Normally, putting '<' and '>' symbols
@@ -178,13 +177,10 @@ module Kendrick
       @@tags = [] # Append symbols through mixins to filter valid tags.
 
       attr_reader :tags # The tags found on the instance object.
-      
-      def self.Tags
+
+      def self.Tags(values = nil)
+        @@tags = (@@tags + values).uniq if !values.nil?
         @@tags.collect { |x| x.to_sym } # Ensure all are read as symbols
-      end
-      
-      def self.Tags=(values)
-        @@tags = values
       end
       
       def setup # Provides a setup method for object constructed without initialize.
@@ -244,7 +240,7 @@ module Kendrick
           tags = {}
           Regex[:Tag].match(text) { |m|
             # Must convert to symbol to match Tags
-            name = m[1].intern
+            name = m[1].intern            
             # This allows unspecified tags to skip format checks and parsing.
             next unless Noted.Tags.include?(name)
             # Convert to has by name for tag indexing.
@@ -275,16 +271,20 @@ module Kendrick
           }
         end
       end # Kendrick::Core::Noted::Tag
-      #===========================================================================
+      #=========================================================================
       # Note: This class signifies and error in the way a user-specified tag was 
       # constructed inside of the note section.
-      #===========================================================================
+      #=========================================================================
       class MalFormattedNotetagError < Exception      
         def initialize()
           super("The note section contained a mal-formatted tag.")
         end
       end # Kendrick::Core::Noted::MalFormattedNotetagError
     end # Kendrick::Core::Noted
+    
+    def self.load_database
+      Kendrick::Core::Script.resolve_dependencies
+    end
   end # Kendrick::Core
 end # Kendrick
 #===============================================================================
@@ -294,11 +294,9 @@ module DataManager
   class << self
     alias :kendrick_core_load_database :load_database
   end
-  
-  # This overload allows registered depenendencies to be resolved.
   def self.load_database
-    Kendrick::Core::Script.resolve_dependencies
     kendrick_core_load_database
+    Kendrick::Core.load_database
   end
 end # DataManager
 #===============================================================================
