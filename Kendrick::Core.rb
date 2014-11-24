@@ -2,7 +2,7 @@
 #===============================================================================
 Author:     Tyler Kendrick
 Title:      Kendrick - Core
-Version:    v1.0.0
+Version:    v1.1.0
 
 Language:   RGSS3
 Framework:  RPG Maker VX Ace
@@ -117,6 +117,59 @@ module Kendrick
       '"' => "&quot;"
     } # Kendrick::Core::XmlCodes
     #===========================================================================
+    # Note: This module is meant to act as a common mixin for addons.
+    #===========================================================================
+    module Script
+      @@dependencies = []
+      
+      def self.Dependencies
+        return @@dependencies
+      end
+  
+      def self.Dependencies=(value)
+        @@dependencies = value
+      end
+      
+      def self.resolve_dependencies
+        remaining = @@dependencies - $imported.keys.select { |x| $imported[x] }
+        if !(remaining.nil? || remaining.empty?)
+          names = remaining.join(", ")
+          message = "The following scripts were required, but not found: { #{names} }"
+          raise ::StandardError.new(message)
+        end
+      end
+    end # Kendrick::Core::Script    
+    #===========================================================================
+    # Note: This module exists as a helper object to clean text for parsing with
+    # my Regex::Tags regular expression.  Normally, putting '<' and '>' symbols
+    # in an tag's attribute value would break the regular expression.  However,
+    # this construct allows for symbols to be encoded/decoded into safe symbols
+    # that can be parsed by my regular expression.
+    #===========================================================================
+    class ::String
+      def self.xml_encode(text) # Replaces text in quotes with HTML codes.
+        return text.gsub(Regex[:Quotes]) { |m|
+          # Encodes xml tags braces to their named code.
+          "#{m}".gsub(Regex[:XmlTag]) { |x| XmlCodes["#{x}"] }
+        }
+      end
+      
+      def self.xml_decode(text) # Replaces HTML codes in quotes with text. 
+        return text.gsub(Regex[:Quotes]) { |m| 
+          # Decodes xml codes to their symbol.
+          "#{m}".gsub(Regex[:XmlCode]) { |x| XmlCodes.index("#{x}") }
+        }
+      end
+        
+      def xml_encode()
+        return ::String.xml_encode(self)
+      end
+      
+      def xml_decode()
+        return ::String.xml_decode(self)
+      end
+    end # ::String
+    #===========================================================================
     # Note: This module reads note sections on objects with a "note" field.  By
     # using "include Kendrick::Noted" in a class or module, specified notetags
     # can be parsed and handled from the "note" field.
@@ -135,7 +188,7 @@ module Kendrick
       end
       
       def setup # Provides a setup method for object constructed without initialize.
-        @tags = Tag.parse(self.note.xmlEncode)
+        @tags = Tag.parse(self.note.xml_encode)
         # parse_tag MUST be implemented for mixins
         @tags.each_value { |tag| parse_tag(tag) }
       end
@@ -150,7 +203,7 @@ module Kendrick
           end
           
           def self.parse(text)
-            return text.xmlDecode.split.collect { |attr| 
+            return text.xml_decode.split.collect { |attr| 
               raise MalFormattedNotetagError.new unless valid?(attr)
               pair = attr.split('=')
               Attribute.new(pair[0], pair[1].delete('"'))
@@ -196,7 +249,7 @@ module Kendrick
             next unless Noted.Tags.include?(name)
             # Convert to has by name for tag indexing.
             attributes = Attribute.parse(m[2])
-            innerText = m[3].xmlDecode if !m[3].empty?
+            innerText = m[3].xml_decode if !m[3].empty?
             tag = Tag.new(name, innerText, attributes)
             tags[name] = tag
           }
@@ -235,6 +288,20 @@ module Kendrick
   end # Kendrick::Core
 end # Kendrick
 #===============================================================================
+# DataManager
+#===============================================================================
+module DataManager
+  class << self
+    alias :kendrick_core_load_database :load_database
+  end
+  
+  # This overload allows registered depenendencies to be resolved.
+  def self.load_database
+    Kendrick::Core::Script.resolve_dependencies
+    kendrick_core_load_database
+  end
+end # DataManager
+#===============================================================================
 # Array
 #===============================================================================
 class ::Array
@@ -247,25 +314,3 @@ class ::Array
     return ::Array.to_h(self)
   end
 end # ::Array
-#===============================================================================
-# Note: This module exists as a helper object to clean text for parsing with
-# my Regex::Tags regular expression.  Normally, putting '<' and '>' symbols
-# in an tag's attribute value would break the regular expression.  However,
-# this construct allows for symbols to be encoded/decoded into safe symbols
-# that can be parsed by my regular expression.
-#===============================================================================
-module ::String
-  def self.xmlEncode(text) # Replaces text in quotes with HTML codes.
-    return text.gsub(Regex[:Quotes]) { |m|
-      # Encodes xml tags braces to their named code.
-      "#{m}".gsub(Regex[:XmlTag]) { |x| XmlCodes["#{x}"] }
-    }
-  end
-  
-  def self.xmlDecode(text) # Replaces HTML codes in quotes with text. 
-    return text.gsub(Regex[:Quotes]) { |m| 
-      # Decodes xml codes to their symbol.
-      "#{m}".gsub(Regex[:XmlCode]) { |x| XmlCodes.index("#{x}") }
-    }
-  end
-end # ::String
