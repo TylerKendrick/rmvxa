@@ -93,7 +93,7 @@ module Kendrick
   #=============================================================================
   # Note: Need to register objects for core script setup.
   #=============================================================================
-  Script.Dependences ["Kendrick::Core"]
+  Script.Dependencies ["Kendrick::Core"]
   
   #=============================================================================
   # Note: This module reads note sections on objects with a "note" field.  By
