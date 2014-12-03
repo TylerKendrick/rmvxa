@@ -2,7 +2,7 @@
 #===============================================================================
 Author:     Tyler Kendrick
 Title:      Kendrick - Noted
-Version:    v1.0.0
+Version:    v1.1.0
 
 Language:   RGSS3
 Framework:  RPG Maker VX Ace
@@ -101,16 +101,28 @@ module Kendrick
   # be parsed and handled from the "note" field.
   #=============================================================================
   module Noted
-    attr_reader :tags # The tags found on the instance object.
+    attr_reader :tags     # The tags found on the instance object.
+    attr_reader :filters  # The tags to consider when parsing.
     
+    #===========================================================================
+    # Note: This construct only exists to store regular expressions for 
+    # consumption in Kendrick Scripts.
+    #===========================================================================
+    Regex = {
+      :xml_character => /[<|>|\&]/,
+      :xml_code => /(\&\#(\w|\d)+;)/,
+      :quotes => /"(.*)"/,
+      :xml_tag => /<(\w+)\s*(\w+=".*")*\s*(?:(?:\/\s*>)|(?:>(.*)<\s*\/\s*\1\s*>))/m,
+      :xml_attribute => /^((?:\w+)\s*=\s*"(?:.*)")$/m
+    } # Kendrick::Core::Regex
     #===========================================================================
     # Note: Specifies which tag names will be parsed by Kendrick::Noted.
     #===========================================================================
-    @@tags = [] # Append symbols through mixins to filter valid tags.
-    def self.Tags(values = nil)
-      @@tags = @@tags.auniq(values)
+    @@filters = [] # Append symbols through mixins to filter valid tags.
+    def self.Filters(values = nil)
+      @@filters |= values unless values.nil?
       # Ensure all are read as symbols
-      return @@tags.collect { |x| x.to_sym };
+      return @@filters.collect { |x| x.to_sym }
     end
     #===========================================================================
     # Note: This constant exists only because I was unable to get other methods
@@ -126,43 +138,55 @@ module Kendrick
       '&' => "&amp;",
       '"' => "&quot;"
     } # Kendrick::Core::XmlCodes
-
-    def noted_setup # Provides a setup for object constructed without initialize
-      @tags = Tag.parse(note.xml_encode)
-      @tags.each_value { |tag| parse_tag(tag) }
+    
+    # Provides a setup for object constructed without initialize
+    def noted_setup(options = Tag.options)      
+      @filters = options[:filters] | Noted.Filters
+      @tags = Tag.parse(note, options)
+      @tags.each { |tag| parse_tag(tag) }
     end
     
     def parse_tag(tag) # Required: Should be overriden in implementation.
       raise Errors[:missing_method].call(self, __method__)
     end
-    
     #===========================================================================
     # Note: Any tag that conforms to the specified notetag format.
     #===========================================================================
     class Tag
       attr_reader :name
       attr_reader :innerText
-      
-      def self.parse(text)
-        tags = {}
-        Core::Regex[:xml_tag].match(text) { |m|
-          # Must convert to symbol to match Tags
-          name = m[1].intern            
-          # This allows unspecified tags to skip format checks and parsing.
-          next unless Noted.Tags.include?(name)
-          # Convert to has by name for tag indexing.
-          attributes = Attribute.parse(m[2])
-          innerText = m[3].xml_decode if !m[3].empty?
-          tags[name] = Tag.new(name, innerText, attributes)
+
+      def self.options
+        return {
+          :filters => Noted.Filters,
+          :parse_attr => proc { |x| x && !x.empty? ? Attribute.parse(x) : [] },
+          :parse_text => proc { |x| x && !x.empty? ? x.xml_decode : "" }
         }
-        return tags
+      end
+      
+      def self.parse(text, options = Tag.options)
+        @options = Tag.options.merge(options)
+        filters = @options[:filters] | Noted.Filters
+        tags = text.xml_encode.scan(Regex[:xml_tag]).collect { |m|
+          # Must convert to symbol to match Tags
+          name = m[0].intern
+          # This allows unspecified tags to skip format checks and parsing.
+          next unless filters.include?(name)
+          attributes = @options[:parse_attr].call(m[1])
+          innerText = @options[:parse_text].call(m[2])
+          tag = Tag.new(name, innerText, attributes)
+          ####msgbox_p(tag)
+          tag
+        }
+        ####msgbox_p(tags) unless tags.empty?
+        return tags.compact
       end
               
       def initialize(name, innerText, attributes)
         @name = name
         @innerText = innerText
         @attributes = attributes if attributes.is_a?(::Hash)
-        @attributes = attributes.to_h { |x| x.name } if attributes.is_a?(::Array)
+        @attributes = ::Array.to_h(attributes) { |x| x.name } if attributes.is_a?(::Array)
         if @attributes.nil?
           raise TypeError.new("Expected type of Hash or Array.") 
         end
@@ -181,9 +205,8 @@ module Kendrick
       end
       
       def to_s
-        attrs = @attributes.values
-          .collect{ |a| " " + a.to_s }
-          .reduce(:+) # joins all strings together with initial space.
+        attrs = @attributes.values.join(' ')
+        attrs = " " + attrs unless attrs.nil? || attrs.empty?
         if @innerText.nil? || @innerText.empty?
           return "<#@name#{attrs}/>" # self-enclosed tag if no innerText
         else # matching tags if innerText not nil
@@ -199,42 +222,129 @@ module Kendrick
       def valid_attributes?(attributes)
         return attributes.is_a?(::Hash) && attributes.all? { |pair|
           attributes.keys.all? { |key| key.is_a?(::String) } &&
-          attributes.values.all? { |value| value.is_a?(Attribute) }
+          attributes.values.all? { |value| value.is_a?(Noted::Attribute) }
         }
       end
     end # Kendrick::Noted::Tag
     #===========================================================================
     # Note: Any tag attribute that conforms to the specified notetag format.
     #===========================================================================
-    Attribute = Struct.new(:name, :value) do
-      def self.valid?(text)
-        return Core::Regex[:xml_attribute].match(text)
-      end
-      
+    Attribute = Struct.new(:name, :value) do      
       def self.parse(text)
-        return text.xml_decode.split.collect { |attr| 
-          raise MalFormattedNotetagError.new unless valid?(attr)
-          pair = attr.split('=')
-          Attribute.new(pair[0], pair[1].delete('"'))
-        }
+        return text.xml_decode.split.collect { |attr|
+          if !(attr.nil? || attr.empty?)
+            pair = attr.split('=')
+            Attribute.new(pair[0], pair[1].sub('"', ""))
+          end
+        }.compact
       end
       
       def to_s
-        return sprintf('%s="%s"', name, value)
+        return "#{name}=#{value}"
       end
       
       def inspect
         return to_s
       end
     end # Kendrick::Noted::Attribute
-    #=========================================================================
+    #===========================================================================
     # Note: This class signifies and error in the way a user-specified tag was 
     # constructed inside of the note section.
-    #=========================================================================
+    #===========================================================================
     class MalFormattedNotetagError < SyntaxError      
       def initialize()
         super("The note section contained a mal-formatted tag.")
       end
     end # Kendrick::Noted::MalFormattedNotetagError
+    #===========================================================================
+    # Note: This module simply allows for database objects to have their note
+    # sections parsed.
+    #===========================================================================
+    module Parser
+      def skill_tags(skill_id, options = nil)
+        target = $data_skills[skill_id]
+        return Tag.parse(target.note, options)
+      end
+      
+      def learning_tags(class_id, skill_id, options = nil)
+        target = $data_classes[class_id].learnings.first { |x| 
+          x.skill_id == skill_id
+        }
+        return Tag.parse(target.note, options)
+      end
+      
+      def actor_tags(actor_id, options = nil)
+        target = $data_actors[actor_id]
+        return Tag.parse(target.note, options)
+      end
+      
+      def enemy_tags(enemy_id, options = nil)
+        target = $data_enemies[enemy_id]
+        return Tag.parse(target.note, options)
+      end
+      
+      def item_tags(item_id, options = nil)
+        target = $data_items[item_id]
+        return Tag.parse(target.note, options)
+      end
+      
+      def weapon_tags(weapon_id, options = nil)
+        target = $data_weapons[weapon_id]
+        return Tag.parse(target.note, options)
+      end
+      
+      def armor_tags(armor_id, options = nil)
+        target = $data_armor[armor_id]
+        return Tag.parse(target.note, options)
+      end
+      
+      def state_tags(state_id, options = nil)
+        target = $data_states[state_id]
+        return Tag.parse(target.note, options)
+      end
+      
+      def tileset_tags(tileset_id, options = nil)
+        target = $data_tilesets[tileset_id]
+        return Tag.parse(target.note, options)
+      end
+    end # Kendrick::Noted::Parser
   end # Kendrick::Noted
 end # Kendrick
+#===============================================================================
+# ::Game_Interpreter
+#===============================================================================
+class ::Game_Interpreter
+  include Kendrick::Noted::Parser
+end # ::Game_Interpreter
+#===============================================================================
+# Note: This module exists as a helper object to clean text for parsing with my 
+# Regex::Tags regular expression.  Normally, putting '<' and '>' symbols in a 
+# tag's attribute value would break the regular expression.  However, this 
+# construct allows for symbols to be encoded/decoded into safe symbols that can 
+# be parsed by my regular expression.
+#===============================================================================
+class ::String
+  include Kendrick::Noted
+  
+  def self.xml_encode(text) # Replaces text in quotes with HTML codes.
+    return text.gsub(Regex[:quotes]) { |m|
+      # Encodes xml tags braces to their named code.
+      "#{m}".gsub(Regex[:xml_character]) { |x| XmlCodes["#{x}"] }
+    }
+  end
+  
+  def self.xml_decode(text) # Replaces HTML codes in quotes with text. 
+    return text.gsub(Regex[:quotes]) { |m| 
+      # Decodes xml codes to their symbol.
+      "#{m}".gsub(Regex[:xml_code]) { |x| XmlCodes.index("#{x}") }
+    }
+  end
+    
+  def xml_encode()
+    return ::String.xml_encode(self)
+  end
+  
+  def xml_decode()
+    return ::String.xml_decode(self)
+  end
+end # ::String
