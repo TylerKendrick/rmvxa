@@ -2,7 +2,7 @@
 #===============================================================================
 Author:     Tyler Kendrick
 Title:      Kendrick - Core
-Version:    v2.0.0
+Version:    v2.0.1
 
 Language:   RGSS3
 Framework:  RPG Maker VX Ace
@@ -63,8 +63,7 @@ module Kendrick
     @@errors = {
       # Use: Errors[:missing_method].call(self, __method__)
       :missing_method => proc { |context, method|
-        className = context.class.name
-        message = "#{method} must be implemented on #{className}"
+        message = "#{method} must be implemented on #{context}"
         ::NotImplementedError.new(message)
       }
     } # Kendrick::Core::Errors
@@ -88,17 +87,6 @@ module Kendrick
       @@escape_characters = @@escape_characters.merge(values) if values
       return @@escape_characters
     end
-    #===========================================================================
-    # Note: This construct only exists to store regular expressions for 
-    # consumption in Kendrick Scripts.
-    #===========================================================================
-    Regex = {
-      :xml_tag => /[<|>|\&]/,
-      :xml_code => /(\&\#(\w|\d)+;)/,
-      :quotes => /"([^"]*)"/,
-      :xml_tag => /^<(\w+)([^<]+)*(?:>(.*)<\/(?:\s)*\1>|(\s*)+\/>)$/m,
-      :xml_attribute => /(\w+)\=("([^"]*)"){1}/
-    } # Kendrick::Core::Regex
     #===========================================================================
     # Note: This method enables custom initializatiion after the database has 
     # loaded.
@@ -173,7 +161,7 @@ class ::Window_Base < ::Window
   end
   
   def convert_escape_character(key)
-    return Kendrick::Core::Escape_Characters[key]
+    return Kendrick::Core.Escape_Characters[key]
   end
 end # ::Window_Base
 #===============================================================================
@@ -185,49 +173,7 @@ class ::Array
     return ::Hash[array.collect { |item| [key.call(item), item] }]
   end
   
-  # Adds two arrays together and filters for unique results.
-  def self.auniq(array, other, &selector)
-    result = other ? (array + other).uniq : array
-    return result
-  end
-  
   def to_h(&key)
     return ::Array.to_h(self) { |item| key.call(item) }
   end
-
-  def auniq(other, &selector)
-    return ::Array.auniq(self, other) { |item| selector.call(item) }
-  end
 end # ::Array
-#===============================================================================
-# Note: This module exists as a helper object to clean text for parsing with my 
-# Regex::Tags regular expression.  Normally, putting '<' and '>' symbols in a 
-# tag's attribute value would break the regular expression.  However, this 
-# construct allows for symbols to be encoded/decoded into safe symbols that can 
-# be parsed by my regular expression.
-#===============================================================================
-class ::String
-  include Kendrick
-  
-  def self.xml_encode(text) # Replaces text in quotes with HTML codes.
-    return text.gsub(Core::Regex[:quotes]) { |m|
-      # Encodes xml tags braces to their named code.
-      "#{m}".gsub(Core::Regex[:xml_tag]) { |x| Noted::XmlCodes["#{x}"] }
-    }
-  end
-  
-  def self.xml_decode(text) # Replaces HTML codes in quotes with text. 
-    return text.gsub(Core::Regex[:quotes]) { |m| 
-      # Decodes xml codes to their symbol.
-      "#{m}".gsub(Core::Regex[:xml_code]) { |x| Noted::XmlCodes.index("#{x}") }
-    }
-  end
-    
-  def xml_encode()
-    return ::String.xml_encode(self)
-  end
-  
-  def xml_decode()
-    return ::String.xml_decode(self)
-  end
-end # ::String
