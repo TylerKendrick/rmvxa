@@ -1,0 +1,105 @@
+=begin
+#===============================================================================
+Author:     Tyler Kendrick
+Title:      Actor Skill Progression
+Version:    v1.0.0
+Language:   RGSS3
+Framework:  RPG Maker VX Ace
+Git:        http://git.github.com/tylerkendrick/rmvxa_skill_progression
+--------------------------------------------------------------------------------
+LICENSE: 
+
+The MIT License (MIT)
+
+Copyright (c) 2014 Tyler Kendrick
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+--------------------------------------------------------------------------------
+Description:
+
+The following script enables the ability to gain experience and level-up actor
+skills with each successful hit.  Each skill contains it's own set of parameters
+and experience points so they may level-up and grow independently.
+
+Learned skills and their parameters may be accessed through call-scripts, 
+formulae, and the RPG::Actor.learned accessor.
+
+Customization options are available through a simple class and note tags in the 
+skill editor notes window.
+
+--------------------------------------------------------------------------------
+Setup:
+
+Simply paste this script above your "Main" script and it will take effect.
+
+--------------------------------------------------------------------------------
+Usage:
+  
+  - Call-Scripts:
+    
+
+  - Formulae:
+    The parameters "item", "skill", "skill_lv", and "skill_ratio" have been
+    added to the Game_Battler object and are accessible in the formula textbox
+    in the editor.  This is especially useful when scaling the effects of skills
+    based on their level
+    
+    i.e. Attack Skill: (a.atk * 4 * a.skill_ratio - b.def * 2)
+
+    To implement this formula, follow these steps:
+      1.) Open the database editor.
+      2.) Open the skills tab.
+      3.) Click on the "Attack" skill.
+      4.) Copy/Paste the formula into the text-box labeled "Formula".
+--------------------------------------------------------------------------------
+Customization:
+
+#===============================================================================
+=end
+$imported ||= {} 
+$imported["Kendrick::Actor_Skill_Experience"] = true
+Kendrick::Script.Dependencies [
+  "Kendrick::Data_Levels::Skills", 
+  "Kendrick::Data_Levels::Experience"
+]
+#===============================================================================
+# Note: This class override allows makes use of the skill progression data.  The
+# actual use and logic of this script file is all contained within this class.
+#===============================================================================
+class ::Game_Actor < ::Game_Battler    
+  alias :kendrick_actor_skill_progression_use_item :use_item
+  def use_item(item)
+    kendrick_actor_skill_progression_use_item(item)
+    skill_levels[item.id].gain_exp
+  end
+end # ::Game_Actor
+#===============================================================================
+# Note: This override exists in order to display the actor's skill level as a
+# part of the skill's name - as well as displaying the skill exp.
+#===============================================================================
+class ::Window_SkillList < ::Window_Selectable
+  def update_help # override
+    if item
+      skill = @actor.skill_levels[item.id]
+      message = sprintf("exp: %d/%d", skill.exp, skill.to_next)
+      message = sprintf("%s\n%s", item.description, message) if !item.description.empty?
+      @help_window.set_text(message)
+    end
+  end  
+end # ::Window_SkillList
