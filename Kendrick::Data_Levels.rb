@@ -54,7 +54,7 @@ module Kendrick
   #=============================================================================
   # Note: Need to register objects for core script setup.
   #=============================================================================
-  Noted.Tags [ :level, :max_level, :progress ]
+  Noted.Filters [ :level, :max_level, :progress ]
   Script.Dependencies ["Kendrick::Core"]
   
   #=============================================================================
