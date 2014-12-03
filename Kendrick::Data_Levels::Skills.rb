@@ -96,7 +96,7 @@ $imported["Kendrick::Data_Levels::Skills"] = true
 # 
 #===============================================================================
 module Kendrick
-  Noted.Tags [ :level ]
+  Noted.Filters [ :level ]
   Script.Dependencies [
     "Kendrick::Noted",
     "Kendrick::Data_Levels"
