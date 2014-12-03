@@ -57,7 +57,7 @@ module Kendrick
   #=============================================================================
   # Note: Need to register objects for core script setup.
   #=============================================================================
-  Noted.Tags [ :base_exp, :exp_gain, :exp_formula ]
+  Noted.Filters [ :base_exp, :exp_gain, :exp_formula ]
   Script.Dependencies ["Kendrick::Data_Levels"]
   
   #=============================================================================
