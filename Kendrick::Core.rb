@@ -101,7 +101,7 @@ module Kendrick
   module Script
     @@dependencies = []      
     def self.Dependencies(values = nil)
-      return @@dependencies = @@dependencies.auniq(values)
+      return @@dependencies = @@dependencies | values
     end
     
     def self.resolve_dependencies
