@@ -11,6 +11,7 @@ Git:        https://github.com/TylerKendrick/rmvxa
 =end
 $imported ||= {}
 $imported["Kendrick::Core"] = "v0.9.1"
+
 #===============================================================================
 # Note: The Kendrick Module will contain all Kendrick scripts and addons as a 
 # namespace prefix.
@@ -387,7 +388,55 @@ end # ::Object
 #===============================================================================
 # ::Callee
 #===============================================================================
-class ::Callee < ::Observer
+class ::Module
+  
+  #-----------------------------------------------------------------------------
+  # Uses metaclasses to create attributes that implement ::Kendrick::Observable.
+  #-----------------------------------------------------------------------------
+  def attr_observable(attr_name)
+    attr_name = attr_name.to_s
+    attr_reader attr_name
+
+    ::Module.make_attr_observable(self, attr_name)
+
+    define_method "#{attr_name}=" do |new_value|
+      notify_method_name = "notify_#{attr_name}="
+      send(:notify_method_name, new_value)
+    end
+    
+  end
+  
+  def self.make_attr_observable(context, attr_name)
+    variable = instance_variable_get("@#{attr_name}")
+    class << variable
+      include ::Kendrick::Observable
+      
+      context.define_method "notify_#{attr_name}=" do |value, options|
+        old = self
+        callee = context.callee(:instance_variable_set)
+        callback = callee.callback(
+          :before => method(:changing),
+          :complete => ->(status) { notify(nil, :changed, old, value) }
+        )
+        callee.call("@#{attr_name}", value)
+      end
+      
+      private
+      
+      def changing(value)
+        notify(nil, :changing, self, value)
+        return self != value
+      end
+      
+    end # class << variable
+  end # ::Module#make_observable
+
+end # ::Module
+
+#===============================================================================
+# ::Callee
+#===============================================================================
+class ::Callee < ::Kendrick::Observer
   
   #-----------------------------------------------------------------------------
   # Creates and registers a new callback for the target method.
