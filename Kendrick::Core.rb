@@ -2,7 +2,7 @@
 #===============================================================================
 Author:     Tyler Kendrick
 Title:      Kendrick - Core
-Version:    v0.9.1
+Version:    v0.9.2
 
 Language:   RGSS3
 Framework:  RPG Maker VX Ace
@@ -10,7 +10,7 @@ Git:        https://github.com/TylerKendrick/rmvxa
 --------------------------------------------------------------------------------
 =end
 $imported ||= {}
-$imported["Kendrick::Core"] = "v0.9.1"
+$imported["Kendrick::Core"] = "v0.9.2"
 
 #===============================================================================
 # Note: The Kendrick Module will contain all Kendrick scripts and addons as a 
@@ -51,8 +51,8 @@ module Kendrick
         name, value, errorNo = args
         
         case errorNo
-          when :exact_vesion
-            message = "missing script: #{name} + #{value}"
+          when :exact_version
+            message = "missing script: #{name} #{value}"
           when :min_version
             message = "script: #{name} requires minimum version #{value}"
           when :range_version
@@ -111,8 +111,9 @@ module Kendrick
     # assets and data.
     #---------------------------------------------------------------------------
     def self.preload_database
-      resolve_dependencies { |name, value, errorNo|
-        raise ::Kendrick::Errors[:missing_script].call(name, value, errorNo)
+      return resolve_dependencies { |name, value, errorNo|
+        error_method = ::Kendrick::Errors[:missing_script]
+        raise error_method.call(name, value, errorNo)
       }
     end
     
@@ -138,11 +139,9 @@ module Kendrick
     # This method is called by Kendrick::Core to handle dependencies.
     #---------------------------------------------------------------------------
     def self.resolve_dependencies(&on_error)
-      @@scripts.each { |pair|
+      return @@scripts.all? { |pair|
         key, values = pair
-        values.each { |value|
-          resolve_dependency(key, value, &on_error)
-        }
+        values.all? { |value| resolve_dependency(key, value, &on_error) }
       }
     end
     
@@ -150,7 +149,9 @@ module Kendrick
     # Determines how to handle individual dependencies
     #---------------------------------------------------------------------------
     def self.resolve_dependency(name, value, &on_error)
-      on_error.call(name, value) if !$imported.has_key?(name) && on_error
+      has_error = !$imported.has_key?(name)
+      on_error.call(name, value) if has_error && on_error
+      return has_error
     end
     
   end # Kendrick::Core
@@ -159,8 +160,8 @@ module Kendrick
   # Note: This class simply wraps a method for unsubscription from observables.
   #=============================================================================
   class Observer
-    
-    def initialize(method)
+        
+    def initialize(&method)
       @method = method
     end
     
@@ -175,17 +176,21 @@ module Kendrick
   #=============================================================================
   module Observable
 
+    def create_observer(&method)
+      return Observer.new(&method)
+    end
+    
     #---------------------------------------------------------------------------
     # Provide a method, lambda, anonymous method, proc, or callback.
     #---------------------------------------------------------------------------
-    def subscribe(method)
+    def subscribe(&method)
       @observers ||= []
       # Wrap the target method in an observer.
-      observer = Observer.new(method)
+      observer = create_observer(&method)
       # Collect the created observer.
       @observers << observer
       # Return the created observer. This will allow for unsubscription.
-      observer
+      return observer
     end
     
     #---------------------------------------------------------------------------
@@ -200,29 +205,24 @@ module Kendrick
     #---------------------------------------------------------------------------
     # Sends notifications to all registered observers.
     #---------------------------------------------------------------------------
-    def notify(options = {}, *args, &block)
-      options = ::Callback::Options.merge(options || {})
-      notify_all(@observers, options, *args, &block)
+    def notify(*args, &block)
+      return notify_all(@observers, *args, &block)
     end
     
     #---------------------------------------------------------------------------
     # Iterates through each observer to invoke #notify_observer.
     #---------------------------------------------------------------------------
-    def notify_all(observers, options = {}, *args, &block)
-      options = ::Callback::Options.merge(options || {})
-      @observers.each { |observer|
-        notify_observer(observer, options, *args, &block)
+    def notify_all(observers, *args, &block)
+      return @observers.all? { |observer|
+        notify_observer(observer, *args, &block)
       }
     end
       
     #---------------------------------------------------------------------------
     # Invokes the observer with an optional callback that can be overloaded.
     #---------------------------------------------------------------------------
-    def notify_observer(observer, options = {}, *args, &block)
-      options = ::Callback::Options.merge(options || {})
-      callee = observer.callee(:call)
-      callback = callee.callback(options)
-      callee.call(*args, &block)
+    def notify_observer(observer, *args, &block)
+      return observer.call(*args, &block)
     end
       
   end # Kendrick::Observable
@@ -288,12 +288,11 @@ module ::DataManager
     # Invokes the original #load_database with the new callback idiom.
     #---------------------------------------------------------------------------
     def load_database
-      callee = callee(:kendrick_load_database)
-      callee.callback(
-        :before => Kendrick::Core.method(:preload_database),
-        :error => ->(e, type) { raise e },
-        :complete => ->(status) { Kendrick::Core.load_database })
-      callee.call
+      @callee ||= callee(:kendrick_load_database, {
+        :before => ->(*args) { Kendrick::Core.preload_database },
+        :complete => ->(status) { Kendrick::Core.load_database }
+      })
+      @callee.call
     end
     
     alias :registrar_load_data :load_data
@@ -307,7 +306,7 @@ module ::DataManager
       return Kendrick::Core.load_data(path, result)
     end
     
-  end
+  end # class << self
 end # ::DataManager
 
 #===============================================================================
@@ -348,9 +347,9 @@ class ::Object
   #-----------------------------------------------------------------------------
   # Obtains a method as a new Callee instance.
   #-----------------------------------------------------------------------------
-  def callee(symbol)
-    method = method(symbol)
-    return Callee.new(method)
+  def callee(symbol, hash={}, &callback)
+    func = method(symbol)
+    return func.to_callee(hash, &callback)
   end
 
   #-----------------------------------------------------------------------------
@@ -388,64 +387,14 @@ end # ::Object
 #===============================================================================
 # ::Callee
 #===============================================================================
-class ::Module
-  
-  #-----------------------------------------------------------------------------
-  # Uses metaclasses to create attributes that implement ::Kendrick::Observable.
-  #-----------------------------------------------------------------------------
-  def attr_observable(attr_name)
-    attr_name = attr_name.to_s
-    attr_reader attr_name
-
-    ::Module.make_attr_observable(self, attr_name)
-
-    define_method "#{attr_name}=" do |new_value|
-      notify_method_name = "notify_#{attr_name}="
-      send(:notify_method_name, new_value)
-    end
-    
-  end
-  
-  def self.make_attr_observable(context, attr_name)
-    variable = instance_variable_get("@#{attr_name}")
-    class << variable
-      include ::Kendrick::Observable
-      
-      context.define_method "notify_#{attr_name}=" do |value, options|
-        old = self
-        callee = context.callee(:instance_variable_set)
-        callback = callee.callback(
-          :before => method(:changing),
-          :complete => ->(status) { notify(nil, :changed, old, value) }
-        )
-        callee.call("@#{attr_name}", value)
-      end
-      
-      private
-      
-      def changing(value)
-        notify(nil, :changing, self, value)
-        return self != value
-      end
-      
-    end # class << variable
-  end # ::Module#make_observable
-
-end # ::Module
-
-#===============================================================================
-# ::Callee
-#===============================================================================
 class ::Callee < ::Kendrick::Observer
   
   #-----------------------------------------------------------------------------
   # Creates and registers a new callback for the target method.
   #-----------------------------------------------------------------------------
-  def callback(options = {})
-    options = ::Callback::Options.merge(options)
-
+  def subscribe(hash = {}, &options)
     @callbacks ||= []
-    callback = ::Callback.new(options)
+    callback = ::Callback.new(hash, &options)
     @callbacks << callback
     return callback
   end
@@ -455,58 +404,135 @@ class ::Callee < ::Kendrick::Observer
   #-----------------------------------------------------------------------------
   def call(*args, &block)
     status = :not_modified
-    # Nifty idiom used to obtain value as boolean.
-    return unless !!callbacks(:before)
+    if @callbacks.all? { |x| x.before(*args) }
     
-    begin
-      result = @method.call(*args)
-      callbacks(:success, result)
-      status = :success
-    rescue Exception => e
-      callbacks(:error, e, :error)
-      status = :error
+      begin
+        result = super(*args, &block)
+        @callbacks.each { |x| x.success(result) }
+        status = :success
+      rescue Exception => e
+        status = :error
+        @callbacks.each { |x| x.error(e, :error) }
+      end
+    
     end
-    
-    callbacks(:complete, status)
-  end
-  
-  private 
-  
-  def callbacks(method, *args)
-    @callbacks.each { |x| x.call(method, *args) }
+    @callbacks.each { |x| x.complete(status) }
   end
   
 end # ::Callee
 
 #===============================================================================
-# ::Callee
+# ::Callback
 #===============================================================================
 class Callback
-
-  #-----------------------------------------------------------------------------
-  # Provides a common idiom for callback structures.
-  #-----------------------------------------------------------------------------
-  def self.options(before = ->{}, error = ->(e, type){},
-    success = ->(data = nil){}, complete = ->(status){})
-    return {
-      :before => before,
-      :error => error,
-      :success => success,
-      :complete => complete
-    }
+  
+  def self.options(hash = {}, &block)
+    options = Options.new(hash)
+    block.call(options) unless block.nil?
+    return options
   end
   
-  Options = ::Callback.options
+  def initialize(hash = {}, &block)
+    @options = Callback.options(hash, &block)
+  end
+    
+  def before(*args)
+    return @options.before.call(*args)
+  end
+  
+  def error(*args)
+    return @options.error.call(*args)
+  end
+  
+  def success(*args, &block)
+    return @options.success.call(*args)
+  end
+
+  def complete(*args, &block)
+    return @options.complete.call(*args)
+  end    
+  
+end # ::Callback
+
+#===============================================================================
+# Provides a common idiom for callback structures.
+#===============================================================================
+class ::Callback::Options
+  
+  def self.before(*args)
+    return true
+  end
+  
+  def self.error(error, type)
+    raise error
+  end
+  
+  def self.success(data = nil)
+    return data
+  end
+  
+  def self.complete(status)
+    return status
+  end
+  
+  Hash = {
+    :before => method(:before),
+    :error => method(:error),
+    :success => method(:success),
+    :complete => method(:complete)
+  }
   
   def initialize(options = {})
-    @callback_idiom = ::Callback::Options.merge(options)
+    options = ::Callback::Options::Hash.merge(options || {})
+    @before = options[:before]
+    @error = options[:error]
+    @success = options[:success]
+    @complete = options[:complete]
   end
   
-  def call(method, *args)
-    @callback_idiom[method].call(*args)
+  def before(&before)
+    @before = before unless before.nil?
+    return @before
   end
   
-end :: Callback
+  def error(&error)
+    @error = error unless error.nil?
+    return @error
+  end
+  
+  def success(&success)
+    @success = success unless success.nil?
+    return @success
+  end
+  
+  def complete(&complete)
+    @complete = complete unless complete.nil?
+    return @complete
+  end
+  
+end
+
+module Function
+
+  def to_callee(hash={}, &options)
+    callee = ::Callee.new(&self)
+    callee.subscribe(hash, &options)
+    return callee
+  end
+
+end
+
+Method.send(:include, Function)
+Proc.send(:include, Function)
+
+class Symbol
+  
+  def to_callee(hash = {}, &options)
+    proc = to_proc
+    return proc.to_callee(hash, &options)
+  end
+  
+end
 
 #===============================================================================
 # This module just makes handling and parsing booleans much easier.
@@ -519,28 +545,22 @@ module ::Boolean
   # Attempts a custom, overloadable, conversion of objects to ::Boolean.
   #-----------------------------------------------------------------------------
   def self.convert(object)
-    
-    case object
+    return case object
       when ::Numeric
-        return object != 0
+        object != 0
       when ::String
         downcase = object.downcase
-        return false if @@false_strings.include?(downcase) 
-        return true if @@true_strings.include?(downcase)
-    end
-    
-    return nil
-  end
+        false if @@false_strings.include?(downcase) 
+        true if @@true_strings.include?(downcase)
+      else 
+        !!object
+    end #case
+  end #self.convert
       
 end # ::Boolean
 
-class ::TrueClass
-  include ::Boolean
-end # ::TrueClass
-
-class ::FalseClass
-  include ::Boolean
-end # ::FalseClass
+TrueClass.send(:include, ::Boolean)
+FalseClass.send(:include, ::Boolean)
 
 #===============================================================================
 # This global method returns evaluated text as an anonymous Proc.
