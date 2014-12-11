@@ -2,7 +2,7 @@
 #===============================================================================
 Author:     Tyler Kendrick
 Title:      Kendrick - Data Levels
-Version:    v0.9.1
+Version:    v0.9.2
 
 Language:   RGSS3
 Framework:  RPG Maker VX Ace
@@ -10,11 +10,11 @@ Git:        https://github.com/TylerKendrick/rmvxa
 --------------------------------------------------------------------------------
 =end
 $imported ||= {}
-$imported["Kendrick::Data_Levels"] = "v0.9.1"
+$imported["Kendrick::Data_Levels"] = "v0.9.2"
 #===============================================================================
 # Note: Need to register objects for core script setup.
 #===============================================================================
-Kendrick::require("Kendrick::Core" => "v0.9.1")
+Kendrick::require("Kendrick::Core" => "v0.9.2")
 
 #===============================================================================
 # Note: This module will contain all new data structures for the Data Levels 
@@ -119,16 +119,14 @@ module Kendrick::Data_Levels
     #---------------------------------------------------------------------------
     def set_level(level)
       # Obtain private setter for clamping value.
-      callee = callee(:lv=)
-      # Create a callback
-      callback = callee.callback(
+      @callee ||= callee(:lv=, {
         # Determine if setter should execute.
-        :before => -> { @lv != level },
+        :before => ->(*args) { @lv != level },
         # Notify when complete.
-        :complete => ->(state) { notify(nil, :level, level) }
-      )
+        :complete => ->(state) { notify(:level, level) }
+      })
       # Invoke the setter with callbacks and notifications
-      callee.call(level)
+      @callee.call(level)
     end
     
     private
@@ -176,21 +174,21 @@ module Kendrick::Data_Levels
     #---------------------------------------------------------------------------
     # Allow overriding.
     #---------------------------------------------------------------------------
-    def on_notify(attr, value, data_id)
+    def manager_changed(attr, value, data_id)
       case attr
         when :level
-          on_notify_level(data_id) if display_level_up?(data_id)
+          manager_changed_level(data_id) if display_level_up?(data_id)
       end
     end
     
     #---------------------------------------------------------------------------
     # Display the message in a game window on notify.
     #---------------------------------------------------------------------------
-    def on_notify_level(data_id)
-      name, lv = @learned[data_id].as { |x| x.name, x.lv }
+    def manager_changed_level(data_id)
+      name, lv = @learned[data_id].as { |x| pair = x.name, x.lv }
       $game_message.new_page
       lv_name = ::Kendrick::Data_Levels::LevelName
-      message = sprintf(::Vocab::LevelUp, name, lv_name, level)
+      message = sprintf(::Vocab::LevelUp, name, lv_name, lv)
       $game_message.add(message)
     end    
     
@@ -241,9 +239,8 @@ module Kendrick::Data_Levels
       data = option(:data).call(data_id)
       level = @providers[data_id] || 1
       manager = create_manager(data, level)
-      manager.subscribe(->(attr, value) { 
-        on_notify(attr, value, data_id) 
-      })
+      manager.subscribe { |attr, value| manager_changed(attr, value, data_id) }
+      
       # Don't call @learned[data_id] = manager.  It will invoke #load_datum.
       @learned.store(data_id, manager) 
     end
