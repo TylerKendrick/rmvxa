@@ -2,19 +2,19 @@
 #===============================================================================
 Author:     Tyler Kendrick
 Title:      Data Levels - Experience
-Version:    v0.9.1
-Git:        https://github.com/TylerKendrick/rmvxace_data_levels
+Version:    v0.9.2
 
 Language:   RGSS3
 Framework:  RPG Maker VX Ace
+Git:        https://github.com/TylerKendrick/rmvxa
 --------------------------------------------------------------------------------
 =end
 $imported ||= {}
-$imported["Kendrick::Data_Levels::Exp"] = "v0.9.1"
+$imported["Kendrick::Data_Levels::Exp"] = "v0.9.2"
 #===============================================================================
 # Note: Need to register objects for core script setup.
 #===============================================================================
-Kendrick::require("Kendrick::Data_Levels" => "v0.9.2")
+Kendrick::require("Kendrick::Data_Levels" => "v0.9.2+")
 
 #===============================================================================
 # Note: This class contains the core logic for Kendrick scripts.
@@ -41,9 +41,8 @@ module Kendrick::Data_Levels::Exp
     # Data_Levels::Level_Manager instance.
     #---------------------------------------------------------------------------
     def create_manager(data, lv = 1)
-      return Level_Manager.new(data, data.id, data.name, lv)
+      Level_Manager.new(data, data.id, data.name, lv)
     end
-    
   end # Kendrick::Data_Levels::Exp::Experience_Ownership
     
   #===========================================================================
@@ -61,9 +60,8 @@ module Kendrick::Data_Levels::Exp
     #---------------------------------------------------------------------------
     # Invokes an evaluated lambda to invoke the formula.
     #---------------------------------------------------------------------------
-    def exp_for_level(lv, s = self)
-      return @exp_formula.call(lv, s)
-    end
+    def exp_for_level(lv, s = self); @exp_formula.call(lv, s); end
+    def exp_enabled?; @exp_enabled; end
        
     alias :exp_load_level_provider :load_level_provider
     #---------------------------------------------------------------------------
@@ -79,14 +77,6 @@ module Kendrick::Data_Levels::Exp
       @exp_formula = eval_method(Default_Exp_Formula, "lv", "s")
       @exp_enabled = exp_enabled
     end
-          
-    #---------------------------------------------------------------------------
-    # Idiomatic accessor for @exp_enabled.
-    #---------------------------------------------------------------------------
-    def exp_enabled?
-      return @exp_enabled
-    end
-    
   end # Kendrick:Data_Levels::Exp::Experience_Provider
   
   #===========================================================================
@@ -109,21 +99,13 @@ module Kendrick::Data_Levels::Exp
       @max_exp = @data.exp_for_level(@max_lv)
     end
       
-    #---------------------------------------------------------------------------
-    # Determines the amount of exp for the next level (up until max lv).
-    #---------------------------------------------------------------------------
     def to_next
       # Don't get exp requirements for levels greater than max.
       next_level = [lv + 1, @max_lv].min
-      return @data.exp_for_level(next_level)
+      @data.exp_for_level(next_level)
     end
 
-    #---------------------------------------------------------------------------
-    # Determines if exp is greater than next level req.
-    #---------------------------------------------------------------------------
-    def to_next? 
-      return level_up? && @exp >= to_next
-    end
+    def to_next?; level_up? && @exp >= to_next; end
         
     #---------------------------------------------------------------------------
     # Increments exp by the default gain amount.
@@ -136,28 +118,34 @@ module Kendrick::Data_Levels::Exp
     # Explicitly sets the exp amount and invokes level_up until satisfied.
     #---------------------------------------------------------------------------
     def set_exp(amount)
-      @exp = [[amount, 0].max, @max_exp].min
+      old = @exp
+      return if old == amount
+      self.exp = amount
       # If exp gain exceeds multiple level requirements, loop until it doesn't
-      level_up while to_next? && level_up?
+      old > @exp ? exp_decrease : exp_increase
     end
     
-    #---------------------------------------------------------------------------
-    # Defer to the Law of Demeter for why I did this.
-    #---------------------------------------------------------------------------
-    def exp_enabled?
-      return @data.exp_enabled?
-    end
+    def exp_enabled?; @data.exp_enabled?; end
     
     alias :kendrick_actor_skill_progression_data_progress_set_level :set_level 
     #---------------------------------------------------------------------------
     # Makes sure to set the exp when the level is changed.
     #---------------------------------------------------------------------------
     def set_level(level) # Sets both level and exp
-      # Invoke setter to clamp to max_level
       kendrick_actor_skill_progression_data_progress_set_level(level)
-      @exp = @data.exp_for_level(level) # Match exp to new level
+      @exp = exp_for_level
     end
-    
+
+    private
+
+    def exp=(value); @exp = [[value, 0].max, @max_exp].min; end
+    def exp_for_level(lv = @lv); @data.exp_for_level(lv); end
+    def exp_decrease
+      self.lv -= 1 while @exp < exp_for_level
+    end
+    def exp_increase
+      self.lv += 1 while @exp >= exp_for_level(@lv + 1)
+    end
   end # Kendrick::Data_Levels::Exp::Level_Management
 
   class Level_Owner < ::Kendrick::Data_Levels::Level_Owner
