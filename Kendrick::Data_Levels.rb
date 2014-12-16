@@ -2,7 +2,7 @@
 #===============================================================================
 Author:     Tyler Kendrick
 Title:      Kendrick - Data Levels
-Version:    v0.9.2
+Version:    v0.9.3
 
 Language:   RGSS3
 Framework:  RPG Maker VX Ace
@@ -10,11 +10,11 @@ Git:        https://github.com/TylerKendrick/rmvxa
 --------------------------------------------------------------------------------
 =end
 $imported ||= {}
-$imported["Kendrick::Data_Levels"] = "v0.9.2"
+$imported["Kendrick::Data_Levels"] = "v0.9.3"
 #===============================================================================
 # Note: Need to register objects for core script setup.
 #===============================================================================
-Kendrick::require("Kendrick::Core" => "v0.9.2")
+Kendrick::require("Kendrick::Core" => "v0.9.2+")
 
 #===============================================================================
 # Note: This module will contain all new data structures for the Data Levels 
@@ -47,9 +47,7 @@ module Kendrick::Data_Levels
     #---------------------------------------------------------------------------
     # Idiomatic accessor for @level_enabled.
     #---------------------------------------------------------------------------
-    def level_enabled?
-      return @level_enabled
-    end
+    def level_enabled?; @level_enabled; end
     
   end # Kendrick::Data_Levels::Level_Provider
   
@@ -76,65 +74,31 @@ module Kendrick::Data_Levels
       self.lv = level   # Only call after @max_lv has been set.
     end
       
-    #---------------------------------------------------------------------------
-    # Appease Demeter.
-    #---------------------------------------------------------------------------
-    def level_enabled?
-      return @data.level_enabled?
-    end
-    
-    #---------------------------------------------------------------------------
-    # Use this for scaling in formulae.
-    #---------------------------------------------------------------------------
-    def ratio
-      # Remember to convert to_f, otherwise will return either 0 or 1.
-      @lv / @max_lv.to_f
-    end
-    
-    #---------------------------------------------------------------------------
-    # This will actually perform a levelup and send notifications.
-    #---------------------------------------------------------------------------
-    def level_up # Invoke setter to set with clamped value
-      set_level(@lv + 1)
-    end
-           
-    #---------------------------------------------------------------------------
-    # Idiomatic accessor to determine if level_up can be performed.
-    #---------------------------------------------------------------------------
-    def level_up? # Determines if level_up can be invoked
-      return @lv != @max_lv
-    end
+    def level_enabled?; @data.level_enabled?; end
+    def level_up?;      @lv != @max_lv;       end
+    def level_down?;    @lv != 1;             end
+
+    def level_up;       set_level(@lv + 1); end
+    def level_down;     set_level(@lv - 1); end
+    def ratio;          @lv / @max_lv.to_f; end
         
-    #---------------------------------------------------------------------------
-    # This can be used in windows to display the level along with the name.
-    #---------------------------------------------------------------------------
     def display_name
-      name = ::Kendrick::Data_Levels::LevelName
+      lv_name = ::Kendrick::Data_Levels::LevelName
       format = ::Kendrick::Data_Levels::LevelFormat
-      return sprintf(format, @name, name, @lv)
+      sprintf(format, @name, lv_name, @lv)
     end
     
     #---------------------------------------------------------------------------
-    # This will actually perform a levelup and send notifications.
+    # This will send notifications.
     #---------------------------------------------------------------------------
     def set_level(level)
-      # Obtain private setter for clamping value.
-      @callee ||= callee(:lv=, {
-        # Determine if setter should execute.
-        :before => ->(*args) { @lv != level },
-        # Notify when complete.
-        :complete => ->(state) { notify(:level, level) }
-      })
-      # Invoke the setter with callbacks and notifications
-      @callee.call(level)
+      self.lv = level if @lv != level
     end
     
-    private
-    #---------------------------------------------------------------------------
-    # This will clamp the level to its provided maximum value.
-    #---------------------------------------------------------------------------
+    protected
     def lv=(level)
       @lv = [[level, @max_lv].min, 1].max
+      notify(:level, level)
     end
     
   end # Kendrick::Data_Levels::Level_Management
@@ -145,13 +109,11 @@ module Kendrick::Data_Levels
   #=============================================================================
   module Level_Ownership
     include ::Kendrick::Core
+    include ::Kendrick::Observable
+    include ::Enumerable
           
-    #---------------------------------------------------------------------------
-    # Simplifies accessibility.  Strictly for simplicity.
-    #---------------------------------------------------------------------------
-    def [](data_id)
-      return @learned[data_id]
-    end
+    def [](data_id); @learned[data_id]; end
+    def each(&block); @learned.each(&block); end
               
     #---------------------------------------------------------------------------
     # The setup method - alias with :initialize on custom classes.
@@ -161,56 +123,24 @@ module Kendrick::Data_Levels
       @learned = Hash.new(&method(:load_datum))
       @options = options
     end
-        
-    #---------------------------------------------------------------------------
-    # Allow overriding, but take default from option.
-    #---------------------------------------------------------------------------
-    def display_level_up?(data_id)
-      return option(:display_message)
-    end
               
     protected
     
     #---------------------------------------------------------------------------
-    # Allow overriding.
-    #---------------------------------------------------------------------------
-    def manager_changed(attr, value, data_id)
-      case attr
-        when :level
-          manager_changed_level(data_id) if display_level_up?(data_id)
-      end
-    end
-    
-    #---------------------------------------------------------------------------
-    # Display the message in a game window on notify.
-    #---------------------------------------------------------------------------
-    def manager_changed_level(data_id)
-      name, lv = @learned[data_id].as { |x| pair = x.name, x.lv }
-      $game_message.new_page
-      lv_name = ::Kendrick::Data_Levels::LevelName
-      message = sprintf(::Vocab::LevelUp, name, lv_name, lv)
-      $game_message.add(message)
-    end    
-    
-    #---------------------------------------------------------------------------
     # Abstract: override in derived classes for new instance defaults.
     #---------------------------------------------------------------------------
-    def data(data_id)
-      raise error(:missing_method)
-    end
+    def data(data_id); raise error(:missing_method); end
     
     #---------------------------------------------------------------------------
-    # Abstract: override in derived classes for new instance defaults.
+    # Virtual: allow overriding. Defaults all levels to 1.
     #---------------------------------------------------------------------------
-    def providers
-      raise error(:missing_method)
-    end
+    def providers; @providers ||= Hash.new { |h, k| h[k] = 1 }; end
         
     #---------------------------------------------------------------------------
     # Virtual: allow overriding.
     #---------------------------------------------------------------------------
     def create_manager(data, lv=1)
-      return Level_Manager.new(data, data.id, data.name, lv)
+      Level_Manager.new(data, data.id, data.name, lv)
     end
     
     private
@@ -218,31 +148,25 @@ module Kendrick::Data_Levels
     #---------------------------------------------------------------------------
     # Used to simplify navigation of options and class methods.
     #---------------------------------------------------------------------------
-    def option(symbol)
-      return @options[symbol] || method(symbol)
-    end
+    def option(symbol); @options[symbol] || method(symbol); end
     
     #---------------------------------------------------------------------------
     # Creates a new manager if the indexed manager is currently not found.
     #---------------------------------------------------------------------------
     def load_datum(learned, data_id)
-      @source ||= option(:providers).call
-      @providers ||= ::Hash[@source]
-          
       create_datum(data_id) unless @learned.has_key?(data_id)
     end
-    
-    #---------------------------------------------------------------------------
-    # Creates a new manager.
-    #---------------------------------------------------------------------------
+
     def create_datum(data_id)
       data = option(:data).call(data_id)
-      level = @providers[data_id] || 1
+      providers = option(:providers).call
+      level = providers[data_id]
       manager = create_manager(data, level)
-      manager.subscribe { |attr, value| manager_changed(attr, value, data_id) }
-      
+      manager.subscribe { |attr, value| 
+        notify(manager, attr, value, data_id) 
+      }
       # Don't call @learned[data_id] = manager.  It will invoke #load_datum.
-      @learned.store(data_id, manager) 
+      @learned.store(data_id, manager)    
     end
     
   end # Kendrick::Data_Levels::Level_Ownership
