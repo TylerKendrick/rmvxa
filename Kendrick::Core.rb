@@ -2,7 +2,7 @@
 #===============================================================================
 Author:     Tyler Kendrick
 Title:      Kendrick - Core
-Version:    v0.9.2
+Version:    v0.9.3
 
 Language:   RGSS3
 Framework:  RPG Maker VX Ace
@@ -10,33 +10,25 @@ Git:        https://github.com/TylerKendrick/rmvxa
 --------------------------------------------------------------------------------
 =end
 $imported ||= {}
-$imported["Kendrick::Core"] = "v0.9.2"
+$imported["Kendrick::Core"] = "v0.9.3"
 
-#===============================================================================
-# Note: The Kendrick Module will contain all Kendrick scripts and addons as a 
-# namespace prefix.
-#===============================================================================
 module Kendrick
-
+  def self.require(values); Core.require(values); end    
+        
   #=============================================================================
-  # Note: Simplifies access for registering scripts.
-  #=============================================================================
-  def self.require(values = {})
-    Core.require(values)
-  end
-  
-  #=============================================================================
-  # Note: This module exists to build and provide common errors.
+  # Kendrick::Errors : This module exists to build and provide common errors.
   #=============================================================================
   module Errors
+    extend Enumerable
+    
     class << self
       
-      def build_errors
+      def default_errors
         return {
           :missing_method => ->(context, method) {
             # putting this in an actual Module#method destroys caller values.
             method ||= caller[0][/`.*'/][1..-2]
-            return missing_method(context, method)
+            missing_method(context, method)
           },
           :missing_script => method(:missing_script)
         }
@@ -44,103 +36,78 @@ module Kendrick
       
       def missing_method(context, method)
         message = "#{method} must be implemented on #{context}"
-        return ::NotImplementedError.new(message)
+        ::NotImplementedError.new(message)
       end
       
       def missing_script(*args)
-        name, value, errorNo = args
-        
-        case errorNo
-          when :exact_version
-            message = "missing script: #{name} #{value}"
-          when :min_version
-            message = "script: #{name} requires minimum version #{value}"
-          when :range_version
-            message = "script: #{name} must be between version range #{value.to_s}"
-          when :bool_include
-            include = value ? "should" : "shouldn't"
-            message = "script: #{name} #{include} be included."
-          else
-            message = "There was an error parsing the dependency: #{name}"
+        args.as do |name, value, errorNo|
+          ::ScriptError.new case errorNo
+            when :exact_version then "missing script: #{name} #{value}"
+            when :min_version then "script: #{name} requires minimum version #{value}"
+            when :range_version then "script: #{name} must be between version range #{value.to_s}"
+            when :bool_include
+              include = value ? "should" : "shouldn't"
+              message = "script: #{name} #{include} be included."
+            else; "There was an error parsing the dependency: #{name}"
+          end
         end
-        
-        ::ScriptError.new(message)
       end
       
-      def [](index)
-        return @@errors[index]
-      end
-          
+      def each(&block); @@errors.each(&block); end
+                
     end # class << self
+    @@errors = ::Kendrick::Errors.default_errors
 
-    @@errors = ::Kendrick::Errors.build_errors
-
-    #---------------------------------------------------------------------------
-    # This method is called by implemented classes to raise a common error.
-    #---------------------------------------------------------------------------
-    def error(key, *args)
-      ::Kendrick::Errors[key].call(self, args)
+    def error(key, *args); 
+      self.class[key].call(self, args); 
     end    
-    
   end # Kendrick::Error
   
   #=============================================================================
-  # Note: This object contains the majority of data structures in use by
-  # derived Kendrick Scripts.
+  # Kendrick::Core
   #=============================================================================  
   module Core
     include Kendrick::Errors
     
-    @@scripts = {}
+    @@scripts = Hash.new { |h, k| h[k] = [] }
     Load_Method = :load_resources
     
     def self.load_data(path, result)
-      # Most results of load_data return an array.
-      if result.is_a?(::Array)
-        # Some items are nil.  Remember to compact.
-        result.compact.each { |x| x.try_method(Load_Method) }        
-      else # RPG::System doesn't return an array.
-        result.try_method(Load_Method)
-      end      
-      
-      return result # Don't forget to return the original result.
+      result.tap do |x|
+        m = ->(y) { y.try_method(Load_Method) }
+        # RPG::System doesn't return an array.
+        x.is_a?(::Array) ? x.compact.each(&m) : m.(x)
+      end
     end
-        
-    #---------------------------------------------------------------------------
-    # This method is used to ensure dependencies are included before loading
-    # assets and data.
-    #---------------------------------------------------------------------------
+    
     def self.preload_database
-      return resolve_dependencies { |name, value, errorNo|
-        error_method = ::Kendrick::Errors[:missing_script]
-        raise error_method.call(name, value, errorNo)
-      }
+      resolve_dependencies(&method(:error_handler))
+    end
+    
+    def self.error_handler(*args)
+      raise missing_script(*args)
     end
     
     #---------------------------------------------------------------------------
     # Reserved for aliasing.
     #---------------------------------------------------------------------------
-    def self.load_database
-    end
+    def self.load_database; end
     
     #---------------------------------------------------------------------------
     # This method is called by implemented classes to register a dependency.
     #---------------------------------------------------------------------------
     def self.require(values = {})
-      for pair in values do
-        key, value = pair
-        @@scripts[key] ||= []   
+      values.each { |key, value|
         item = @@scripts[key]
         item << value unless item.include?(value)
-      end
+      }
     end
     
     #---------------------------------------------------------------------------
     # This method is called by Kendrick::Core to handle dependencies.
     #---------------------------------------------------------------------------
     def self.resolve_dependencies(&on_error)
-      return @@scripts.all? { |pair|
-        key, values = pair
+      return @@scripts.all? { |key, values|
         values.all? { |value| resolve_dependency(key, value, &on_error) }
       }
     end
@@ -148,85 +115,51 @@ module Kendrick
     #---------------------------------------------------------------------------
     # Determines how to handle individual dependencies
     #---------------------------------------------------------------------------
-    def self.resolve_dependency(name, value, &on_error)
-      has_error = !$imported.has_key?(name)
-      on_error.call(name, value) if has_error && on_error
-      return has_error
-    end
-    
+    def self.resolve_dependency(name, value)
+      $imported.has_key?(name).tap { |x|
+        yield(name, value) if block_given? && !x
+      }
+    end    
   end # Kendrick::Core
   
   #=============================================================================
-  # Note: This class simply wraps a method for unsubscription from observables.
+  # Kendrick::Observer : This class simply wraps a method for unsubscription 
+  # from observables.
   #=============================================================================
   class Observer
         
-    def initialize(&method)
-      @method = method
-    end
-    
-    def call(*args, &block)
-      @method.call(*args, &block)
-    end
-    
+    def initialize(&method); @method = method; end
+    def call(*args, &block); @method.call(*args, &block); end    
   end # Kendrick::Observer
+        
+  #=============================================================================
+  # Kendrick::Notifiable
+  #=============================================================================
+  module Notifiable
+    
+    def observers; @observers ||= []; end
+    def notify(*args, &block)
+      observers.each { |x| x.call(*args, &block) }
+    end
+    
+  end # Kendrick::Notifiable
   
   #=============================================================================
-  # Note: This module allows for notifications to be sent to observers.
+  # ::Game_BaseItem
   #=============================================================================
   module Observable
-
-    def create_observer(&method)
-      return Observer.new(&method)
+    include Notifiable
+    
+    def subscribe(&m)
+      create_observer(&m).tap(&observers.method(:<<))
     end
     
-    #---------------------------------------------------------------------------
-    # Provide a method, lambda, anonymous method, proc, or callback.
-    #---------------------------------------------------------------------------
-    def subscribe(&method)
-      @observers ||= []
-      # Wrap the target method in an observer.
-      observer = create_observer(&method)
-      # Collect the created observer.
-      @observers << observer
-      # Return the created observer. This will allow for unsubscription.
-      return observer
-    end
-    
-    #---------------------------------------------------------------------------
-    # Stops the observer from listening to notifications.
-    #---------------------------------------------------------------------------
-    def unsubscribe(observer)
-      @observers.delete(observer)
-    end
+    def unsubscribe(observer); observers.delete(observer); end
     
     protected
-    
-    #---------------------------------------------------------------------------
-    # Sends notifications to all registered observers.
-    #---------------------------------------------------------------------------
-    def notify(*args, &block)
-      return notify_all(@observers, *args, &block)
-    end
-    
-    #---------------------------------------------------------------------------
-    # Iterates through each observer to invoke #notify_observer.
-    #---------------------------------------------------------------------------
-    def notify_all(observers, *args, &block)
-      return @observers.all? { |observer|
-        notify_observer(observer, *args, &block)
-      }
-    end
-      
-    #---------------------------------------------------------------------------
-    # Invokes the observer with an optional callback that can be overloaded.
-    #---------------------------------------------------------------------------
-    def notify_observer(observer, *args, &block)
-      return observer.call(*args, &block)
-    end
-      
+    def create_observer(&m); Observer.new(&m); end
   end # Kendrick::Observable
-
+  
 end # Kendrick
 
 #===============================================================================
@@ -234,9 +167,7 @@ end # Kendrick
 #===============================================================================
 class ::Game_BaseItem
   
-  def id # Simplifies accessibility
-    return @item_id # This field doesn't have a public accessor.
-  end
+  def id; @item_id; end
   
 end # ::Game_BaseItem
 
@@ -248,24 +179,17 @@ class ::Game_Battler
   #-----------------------------------------------------------------------------
   # Determines if #current_action returns an ::RPG::Item instance.
   #-----------------------------------------------------------------------------
-  def item?
-    return current_action._?(:item)._?(:is_a?, ::RPG::Item)
-  end
+  def item?; current_action._?(:item)._?(:is_a?, ::RPG::Item); end
   
   #-----------------------------------------------------------------------------
   # Determines if #current_action returns an ::RPG::Skill instance.
   #-----------------------------------------------------------------------------
-  def skill? 
-    return current_action._?(:item)._?(:is_a?, ::RPG::Skill)
-  end
+  def skill?; current_action._?(:item)._?(:is_a?, ::RPG::Skill); end
   
   #-----------------------------------------------------------------------------
   # Obtains the last used skill.
   #-----------------------------------------------------------------------------
-  def skill
-    result = skill? ? current_action.item : last_skill
-    return $data_skills[result.id]
-  end
+  def skill; $data_skills[(skill? ? current_action.item : last_skill).id]; end
   
   #-----------------------------------------------------------------------------
   # Simplifies accessibility between classes "Game_Actor" and "Game_Enemy".
@@ -303,7 +227,7 @@ module ::DataManager
     #---------------------------------------------------------------------------
     def load_data(path)
       result = registrar_load_data(path)
-      return Kendrick::Core.load_data(path, result)
+      Kendrick::Core.load_data(path, result)
     end
     
   end # class << self
@@ -317,24 +241,17 @@ class ::Kernal
   #-----------------------------------------------------------------------------
   # Tries to invoke a method if the context responsds to the symbol.
   #-----------------------------------------------------------------------------
-  def self.try_method(context, method, *args, &block)
-    result = false
-    condition = context.respond_to?(method)
-    if condition
-      result = context.send(method, *args)
-      block.call(result) unless block.nil?
-    end
-    return condition
+  def self.try_method(context, symbol, *args, &block)
+    context.respond_to?(symbol).tap { |x|
+      context.send(symbol, *args).tap { |r| yield r if block_given? } if x
+    }
   end
 
   #-----------------------------------------------------------------------------
   # Evaluates text and returns the expression as a lambda.
   #-----------------------------------------------------------------------------
   def self.eval_method(text, *args)
-    args ||= []
-    parameters = args.join(", ")
-    method = "->(#{parameters}){#{text}}"
-    return eval(method)
+    eval("->(#{args.join(',')}){#{text}}")
   end
   
 end # ::Kernal
@@ -348,40 +265,36 @@ class ::Object
   # Obtains a method as a new Callee instance.
   #-----------------------------------------------------------------------------
   def callee(symbol, hash={}, &callback)
-    func = method(symbol)
-    return func.to_callee(hash, &callback)
+    method(symbol).to_callee(hash, &callback)
   end
-
-  #-----------------------------------------------------------------------------
-  # Allows for safe navigation.  Simplifies null coalescing index expressions.
-  #-----------------------------------------------------------------------------
-  def maybe(*args, &block)
-    condition = is_a?(::NilClass) || !respond_to?(args.first)
-    return condition ? nil : send(*args, &block)
-  end
-  alias :_? :maybe
 
   #-----------------------------------------------------------------------------
   # Invokes ::Kernal#try_method with the caller provided as the current context.
   #-----------------------------------------------------------------------------
-  def try_method(method, *args, &block)
-    return ::Kernal.try_method(self, method, *args, &block)
+  def try_method(method, *args)
+    ::Kernal.try_method(self, method, *args)
   end
   
   #-----------------------------------------------------------------------------
   # Invokes ::Boolean#convert with the caller provided as the current context.
   #-----------------------------------------------------------------------------
-  def to_b
-    return ::Boolean.convert(self)
-  end
+  def to_b; ::Boolean.convert(self); end
   
   #-----------------------------------------------------------------------------
   # Simplifies multiple assignment operations as explicit block expressions.
   #-----------------------------------------------------------------------------
-  def as
-    return yield self
-  end
+  def as; yield self; end
 
+  #-----------------------------------------------------------------------------
+  # Allows for safe navigation.  Simplifies null coalescing index expressions.
+  #-----------------------------------------------------------------------------
+  def maybe(*args, &block)
+    is_a?(::NilClass) || !respond_to?(args.first) ? nil : send(*args, &block)
+  end
+  alias :_? :maybe
+  
+  def if(condition = !nil?); condition && block_given? ? yield(self) : self; end
+  def unless(condition = !nil?, &block); self.if(!condition, &block); end
 end # ::Object
 
 #===============================================================================
@@ -394,20 +307,18 @@ class ::Callee < ::Kendrick::Observer
   #-----------------------------------------------------------------------------
   def subscribe(hash = {}, &options)
     @callbacks ||= []
-    callback = ::Callback.new(hash, &options)
-    @callbacks << callback
-    return callback
+    ::Callback.new(hash, &options).tap(&@callbacks.method(:<<))
   end
   
   #-----------------------------------------------------------------------------
   # Invokes a target method with exception handling provided by an options hash.
   #-----------------------------------------------------------------------------
-  def call(*args, &block)
+  def call(*args)
     status = :not_modified
     if @callbacks.all? { |x| x.before(*args) }
     
       begin
-        result = super(*args, &block)
+        result = super
         @callbacks.each { |x| x.success(result) }
         status = :success
       rescue Exception => e
@@ -427,53 +338,46 @@ end # ::Callee
 class Callback
   
   def self.options(hash = {}, &block)
-    options = Options.new(hash)
-    block.call(options) unless block.nil?
-    return options
+    Options.new(hash, &block)
   end
   
   def initialize(hash = {}, &block)
     @options = Callback.options(hash, &block)
   end
     
-  def before(*args)
-    return @options.before.call(*args)
-  end
-  
-  def error(*args)
-    return @options.error.call(*args)
-  end
-  
-  def success(*args, &block)
-    return @options.success.call(*args)
-  end
-
-  def complete(*args, &block)
-    return @options.complete.call(*args)
-  end    
+  def before(*args);    @options.before.call(*args); end
+  def error(*args);     @options.error.call(*args); end
+  def success(*args);   @options.success.call(*args); end
+  def complete(*args);  @options.complete.call(*args); end    
   
 end # ::Callback
+
+class Options
+  
+  def initialize(options = {})
+    meta = class << self; self; end
+    options.each { |key, value|
+      sym = "@#{key}"
+      instance_variable_set(sym, value)
+      meta.send(:define_method, key) { |&b| accrue(sym, &b) }
+    }
+  end
+  
+  private
+  alias :set :instance_variable_set
+  alias :get :instance_variable_get
+  def accrue(sym, &b); block_given? ? set(sym, &b) : get(sym); end
+end
 
 #===============================================================================
 # Provides a common idiom for callback structures.
 #===============================================================================
-class ::Callback::Options
+class ::Callback::Options < ::Options
   
-  def self.before(*args)
-    return true
-  end
-  
-  def self.error(error, type)
-    raise error
-  end
-  
-  def self.success(data = nil)
-    return data
-  end
-  
-  def self.complete(status)
-    return status
-  end
+  def self.before(*args);       true; end  
+  def self.error(error, type);  raise error; end
+  def self.success(data = nil); data; end  
+  def self.complete(status);    status; end
   
   Hash = {
     :before => method(:before),
@@ -483,43 +387,15 @@ class ::Callback::Options
   }
   
   def initialize(options = {})
-    options = ::Callback::Options::Hash.merge(options || {})
-    @before = options[:before]
-    @error = options[:error]
-    @success = options[:success]
-    @complete = options[:complete]
-  end
-  
-  def before(&before)
-    @before = before unless before.nil?
-    return @before
-  end
-  
-  def error(&error)
-    @error = error unless error.nil?
-    return @error
-  end
-  
-  def success(&success)
-    @success = success unless success.nil?
-    return @success
-  end
-  
-  def complete(&complete)
-    @complete = complete unless complete.nil?
-    return @complete
-  end
-  
+    super(Hash.merge(options || {}))
+  end  
 end
 
 module Function
 
   def to_callee(hash={}, &options)
-    callee = ::Callee.new(&self)
-    callee.subscribe(hash, &options)
-    return callee
+    ::Callee.new(&self).tap { |x| x.subscribe(hash, &options) }
   end
-
 end
 
 Method.send(:include, Function)
@@ -528,35 +404,32 @@ Proc.send(:include, Function)
 class Symbol
   
   def to_callee(hash = {}, &options)
-    proc = to_proc
-    return proc.to_callee(hash, &options)
+    to_proc.to_callee(hash, &options)
   end
-  
 end
 
 #===============================================================================
 # This module just makes handling and parsing booleans much easier.
 #===============================================================================
 module ::Boolean
-  @@true_strings = ["true", "t", "1"] # can append "yes"
-  @@false_strings = ["false", "f", "0"] # can append "no"
+  @@true_strings = ["True", "true", "T", "t"] # can append "yes"
+  @@false_strings = ["False", "false", "F", "f"] # can append "no"
   
   #-----------------------------------------------------------------------------
   # Attempts a custom, overloadable, conversion of objects to ::Boolean.
   #-----------------------------------------------------------------------------
   def self.convert(object)
-    return case object
-      when ::Numeric
-        object != 0
-      when ::String
-        downcase = object.downcase
-        false if @@false_strings.include?(downcase) 
-        true if @@true_strings.include?(downcase)
-      else 
-        !!object
+    case object
+      when ::Numeric then object != 0
+      when ::String then object.as { |x|
+        !false_string?(x) && true_string?(x)
+      }
+      else; !!object
     end #case
   end #self.convert
-      
+  
+  def self.false_string?(text); @@false_strings.include?(text); end
+  def self.true_string?(text); @@true_strings.include?(text); end
 end # ::Boolean
 
 TrueClass.send(:include, ::Boolean)
@@ -566,5 +439,5 @@ FalseClass.send(:include, ::Boolean)
 # This global method returns evaluated text as an anonymous Proc.
 #===============================================================================
 def eval_method(text, *args)
-  return ::Kernal.eval_method(text, *args)
+  ::Kernal.eval_method(text, *args)
 end
