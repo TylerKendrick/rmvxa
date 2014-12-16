@@ -1,0 +1,73 @@
+=begin
+#===============================================================================
+Author:     Tyler Kendrick
+Title:      Original Commands
+Version:    v0.9.1
+
+Language:   RGSS3
+Framework:  RPG Maker VX Ace
+Git:        https://github.com/TylerKendrick/rmvxa
+#===============================================================================
+=end
+$imported ||= {} 
+$imported["Original_Commands"] = "v0.9.1"
+
+Original_Command = Struct.new(:symbol, :name, :scene, :method, :enabled) do
+  def enabled?; self[:enabled]; end
+  def call; SceneManager.call(self[:scene]); end
+  def register(command_window, context)
+    symbol = self[:method]
+    func = context.method(symbol)
+    command_window.set_handler(self[:symbol], func)
+  end
+end
+
+module Original_Commands
+  Commands = []
+  Enabled = true
+    
+  def self.new(symbol, name, scene, method = nil, enabled = true)
+    method ||= :command_original
+    Commands << Original_Command.new(symbol, name, scene, method, enabled)
+  end
+  
+  def self.cmd_hash; Hash[Commands.collect { |x| [x.symbol, x] }]; end
+end # ::Demo
+  
+#===============================================================================
+# Alter the existing scene menu to add custom commands.
+#===============================================================================
+class ::Scene_Menu
+  
+  alias :demo_create_command_window :create_command_window
+  def create_command_window
+    demo_create_command_window
+    ::Original_Commands::Commands.each { |x| x.register(@command_window, self) }
+  end
+  
+  def command_original
+    cmds = ::Original_Commands.cmd_hash
+    current_symbol = @command_window.current_symbol 
+    cmds[current_symbol].call if cmds.has_key?(current_symbol)
+  end  
+end # ::Scene_Menu
+
+#===============================================================================
+# Alter main commands to include new command.
+#===============================================================================
+class ::Window_MenuCommand
+  
+  alias :scene_commands_add_original_commands :add_original_commands
+  def add_original_commands
+    scene_commands_add_original_commands
+    
+    ::Original_Commands::Commands.each { |x|
+      enable = original_commands_enabled && x.enabled?
+      add_command(x.name, x.symbol, enable)
+    }
+  end
+  
+  def original_commands_enabled
+    ::Original_Commands::Enabled
+  end  
+end # ::Window_MenuCommand
