@@ -2,7 +2,7 @@
 #===============================================================================
 Author:     Tyler Kendrick
 Title:      Kendrick - Noted
-Version:    v0.9.1
+Version:    v0.9.2
 
 Language:   RGSS3
 Framework:  RPG Maker VX Ace
@@ -10,11 +10,11 @@ Git:        https://github.com/TylerKendrick/rmvxa
 --------------------------------------------------------------------------------
 =end
 $imported ||= {}
-$imported["Kendrick::Noted"] = "v0.9.1"
+$imported["Kendrick::Noted"] = "v0.9.2"
 #===============================================================================
 # Note: Need to register objects for core script setup.
 #===============================================================================
-Kendrick::require("Kendrick::Core" => "v0.9.1")
+Kendrick::require("Kendrick::Core" => "v0.9.1+")
 
 #===============================================================================
 # Note: This module reads note sections on objects with a "note" field.  By
@@ -43,8 +43,7 @@ module Kendrick::Noted
   @@filters = [] # Append symbols through mixins to filter valid tags.
   def self.Filters(values = nil)
     @@filters |= values unless values.nil?
-    # Ensure all are read as symbols
-    return @@filters.collect(&:to_sym)
+    @@filters.collect(&:to_sym)
   end
   
   #=============================================================================
@@ -65,13 +64,11 @@ module Kendrick::Noted
   # Provides a common setup for noted objects
   def load_notes(options = Tag.options)      
     @filters = options[:filters] | ::Kendrick::Noted.Filters
-    @tags = Tag.parse(note, options)
-    @tags.each { |tag| parse_tag(tag) }
+    @tags = Tag.parse(note, options).tap { |x| x.each(&method(:parse_tag)) }
   end
       
-  def parse_tag(tag) # Required: Should be overriden in implementation.
-    raise error(:missing_method)
-  end
+  # Required: Should be overriden in implementation.
+  def parse_tag(tag); raise error(:missing_method); end
   
   #=============================================================================
   # Note: Any tag that conforms to the specified notetag format.
@@ -91,65 +88,65 @@ module Kendrick::Noted
     def self.parse(text, options = Tag.options)
       @options = Tag.options.merge(options)
       filters = @options[:filters] | ::Kendrick::Noted.Filters
-      tags = text.xml_encode.scan(Regex[:xml_tag]).collect { |m|
-        # Must convert to symbol to match Tags
-        name = m[0].intern
-        # This allows unspecified tags to skip format checks and parsing.
-        next unless filters.include?(name)
-        attributes = @options[:parse_attr].call(m[1])
-        innerText = @options[:parse_text].call(m[2])
-        Tag.new(name, innerText, attributes)
-      }
-      return tags.compact
+      text.xml_encode.scan(Regex[:xml_tag])
+        .collect(&method(:parse_match).to_proc.curry[filters]).compact
     end
-            
+    
+    def self.parse_match(filters, match)
+      name = match[0].to_sym
+      # This allows unspecified tags to skip format checks and parsing.
+      return unless filters.include?(name)
+      attributes = @options[:parse_attr].call(match[1])
+      innerText = @options[:parse_text].call(match[2])
+      Tag.new(name, innerText, attributes)
+    end
+    
     def initialize(name, innerText, attributes)
       @name = name
       @innerText = innerText
       
-      @attributes = case attributes
-        when ::Hash
-          attributes
-        when ::Array
-          Hash[attributes.collect { |x| [x.name, x] }]
+      @attrs = case attributes
+        when ::Hash then attributes
+        when ::Array then Hash[attributes.collect { |x| [x.name, x] }]
         when ::NilClass
           raise TypeError.new("Expected type of Hash or Array.") 
       end
         
-      if !valid_attributes?(@attributes)
+      validate_attrs
+    end
+    
+    def validate_attrs
+      if !valid_attributes?(@attrs)
+        msgbox(@attrs)
         message = "Attributes collection was constructed improperly"
         raise StandardError.new(message)
       end
     end
-            
-    def [](name)
-      return @attributes[name]
-    end
     
-    def value # Checks for "value" attribute - otherwise gets innerText.
-      return @attributes["value"] ? @attributes["value"].value : @innerText
-    end
+            
+    def [](name); @attrs[name]; end
+    
+    # Checks for "value" attribute - otherwise gets innerText.
+    def value; @attrs["value"] ? @attrs["value"].value : @innerText; end
     
     def to_s
-      attrs = @attributes.values.join(' ')
+      attrs = @attrs.values.join(' ')
       attrs = " " + attrs unless attrs.nil? || attrs.empty?
       if @innerText.nil? || @innerText.empty?
-        return "<#@name#{attrs}/>" # self-enclosed tag if no innerText
+        "<#@name#{attrs}/>" # self-enclosed tag if no innerText
       else # matching tags if innerText not nil
-        return "<#@name#{attrs}>#@innerText</#@name>"
+        "<#@name#{attrs}>#@innerText</#@name>"
       end  
     end
     
-    def inspect
-      to_s
-    end
+    def inspect; to_s; end
     
     private
     
     def valid_attributes?(attributes)
       return attributes.is_a?(::Hash) && attributes.all? { |pair|
         attributes.keys.all? { |key| key.is_a?(::String) } &&
-        attributes.values.all? { |value| value.is_a?(::Kendrick::Noted::Attribute) }
+        attributes.values.all? { |value| value.is_a?(Attribute) }
       }
     end
     
@@ -161,21 +158,18 @@ module Kendrick::Noted
   Attribute = Struct.new(:name, :value) do      
     
     def self.parse(text)
-      return text.xml_decode.split.collect { |attr|
-        if !(attr.nil? || attr.empty?)
-          pair = attr.split('=')
-          Attribute.new(pair[0], pair[1].sub('"', ""))
-        end
-      }.compact
+      text.xml_decode.split
+        .select { |x| !(x.nil? || x.empty?) }
+        .collect(&method(:get_pair))
+        .collect { |key, value| Attribute.new(key, value) }
+    end
+      
+    def self.get_pair(text)
+      text.split('=').as { |key, value| [key, value.delete('"')] }
     end
     
-    def to_s
-      return "#{name}=#{value}"
-    end
-    
-    def inspect
-      return to_s
-    end
+    def to_s; "#{:name}=#{:value}"; end
+    def inspect; to_s; end
     
   end # Kendrick::Noted::Attribute
   
@@ -185,12 +179,10 @@ module Kendrick::Noted
   #=============================================================================
   class MalFormattedNotetagError < SyntaxError      
     
-    def initialize()
+    def initialize
       super("The note section contained a mal-formatted tag.")
-    end
-    
+    end    
   end # Kendrick::Noted::MalFormattedNotetagError
-  
 end # Kendrick::Noted
 
 #===============================================================================
@@ -200,49 +192,49 @@ class ::Game_Interpreter
   
   def skill_tags(skill_id, options = nil)
     target = $data_skills[skill_id]
-    return Tag.parse(target.note, options)
+    Tag.parse(target.note, options)
   end
   
   def learning_tags(class_id, skill_id, options = nil)
     target = $data_classes[class_id].learnings.first { |x| 
       x.skill_id == skill_id
     }
-    return Tag.parse(target.note, options)
+    Tag.parse(target.note, options)
   end
   
   def actor_tags(actor_id, options = nil)
     target = $data_actors[actor_id]
-    return Tag.parse(target.note, options)
+    Tag.parse(target.note, options)
   end
   
   def enemy_tags(enemy_id, options = nil)
     target = $data_enemies[enemy_id]
-    return Tag.parse(target.note, options)
+    Tag.parse(target.note, options)
   end
   
   def item_tags(item_id, options = nil)
     target = $data_items[item_id]
-    return Tag.parse(target.note, options)
+    Tag.parse(target.note, options)
   end
   
   def weapon_tags(weapon_id, options = nil)
     target = $data_weapons[weapon_id]
-    return Tag.parse(target.note, options)
+    Tag.parse(target.note, options)
   end
   
   def armor_tags(armor_id, options = nil)
     target = $data_armor[armor_id]
-    return Tag.parse(target.note, options)
+    Tag.parse(target.note, options)
   end
   
   def state_tags(state_id, options = nil)
     target = $data_states[state_id]
-    return Tag.parse(target.note, options)
+    Tag.parse(target.note, options)
   end
   
   def tileset_tags(tileset_id, options = nil)
     target = $data_tilesets[tileset_id]
-    return Tag.parse(target.note, options)
+    Tag.parse(target.note, options)
   end
   
 end # ::Game_Interpreter
@@ -257,25 +249,23 @@ end # ::Game_Interpreter
 class ::String
   
   def self.xml_encode(text) # Replaces text in quotes with HTML codes.
-    return text.gsub(Kendrick::Noted::Regex[:quotes]) { |m|
+    text.gsub(Kendrick::Noted::Regex[:quotes]) { |m|
       # Encodes xml tags braces to their named code.
-      "#{m}".gsub(Kendrick::Noted::Regex[:xml_character]) { |x| Kendrick::Noted::XmlCodes["#{x}"] }
+      "#{m}".gsub(Kendrick::Noted::Regex[:xml_character]) { |x| 
+        Kendrick::Noted::XmlCodes["#{x}"] 
+      }
     }
   end
   
   def self.xml_decode(text) # Replaces HTML codes in quotes with text. 
-    return text.gsub(Kendrick::Noted::Regex[:quotes]) { |m| 
+    text.gsub(Kendrick::Noted::Regex[:quotes]) { |m| 
       # Decodes xml codes to their symbol.
-      "#{m}".gsub(Kendrick::Noted::Regex[:xml_code]) { |x| Kendrick::Noted::XmlCodes.index("#{x}") }
+      "#{m}".gsub(Kendrick::Noted::Regex[:xml_code]) { |x| 
+        Kendrick::Noted::XmlCodes.index("#{x}") 
+      }
     }
   end
     
-  def xml_encode()
-    return ::String.xml_encode(self)
-  end
-  
-  def xml_decode()
-    return ::String.xml_decode(self)
-  end
-  
+  def xml_encode; ::String.xml_encode(self); end
+  def xml_decode; ::String.xml_decode(self); end  
 end # ::String
