@@ -2,7 +2,7 @@
 #===============================================================================
 Author:     Tyler Kendrick
 Title:      Actor Classes Experience
-Version:    v0.9.1
+Version:    v0.9.2
 
 Language:   RGSS3
 Framework:  RPG Maker VX Ace
@@ -10,7 +10,7 @@ Git:        https://github.com/TylerKendrick/rmvxa
 #===============================================================================
 =end
 $imported ||= {} 
-$imported["Actor::Classes::Experience"] = "v0.9.1"
+$imported["Actor::Classes::Experience"] = "v0.9.2"
 #===============================================================================
 # Note: Need to register objects for core script setup.
 #===============================================================================
@@ -42,9 +42,7 @@ class ::RPG::Actor
   #-----------------------------------------------------------------------------
   # This is the main setup method.  Included to be called from DataManager.
   #-----------------------------------------------------------------------------
-  def load_resources(options = {})
-    load_notes(:filters => [:class])
-  end
+  def load_resources(options = {}); load_notes(:filters => [:class]); end
   
   #-----------------------------------------------------------------------------
   # Builds the default data provider hash from methods.
@@ -60,20 +58,22 @@ class ::RPG::Actor
   #-----------------------------------------------------------------------------
   # This provides data so the provider hash doesn't have to.
   #-----------------------------------------------------------------------------
-  def class_level_data(class_id); $data_classes[id]; end
+  def class_level_data(class_id); $data_classes[class_id]; end
     
   #-----------------------------------------------------------------------------
   # This is required by Kendrick::Noted
   #-----------------------------------------------------------------------------
   def parse_tag(tag)
     case tag.name
-    when :class
-      id = tag["id"].value.to_i
-      level = tag["lv"].value.to_i
-      class_level_providers[id] = level
+      when :class
+        id = tag["id"].value.to_i
+        class_level_providers[id] = tag["lv"].value.to_i
     end
   end
   
+  #-----------------------------------------------------------------------------
+  # This is used with Level Managers to provide initial levels.
+  #-----------------------------------------------------------------------------
   def class_level_providers
     @class_level_providers ||= Hash.new { |h, k| h[k] = 1 }
   end
@@ -96,28 +96,37 @@ class Game_Actor
     }
   end
   
+  #-----------------------------------------------------------------------------
+  # This is invoked whenever a manager sends a notification.
+  #-----------------------------------------------------------------------------
   def on_owner_manager_changed(manager, attr, value, data_id)
     if attr == :level
       owner_manager_changed_level(@class_levels, manager, value, data_id)
     end
   end  
   
+  #-----------------------------------------------------------------------------
+  # This is invoked whenever a manager changes the level attribute.
+  #-----------------------------------------------------------------------------
   def owner_manager_changed_level(owner, manager, value, data_id)
     datum = $data_classes[data_id]
-    datum.learnings.each do |learning|
-      learn_skill(learning.skill_id) if learning.level == value
-    end
+    datum.learnings.each { |learning|
+      if learning.level <= value
+        learn_skill(learning.skill_id)
+      else
+        forget_skill(learning.skill_id)
+      end
+    }
     manager_changed_level(manager, value, data_id)
-  end  
+  end
   
   #-----------------------------------------------------------------------------
   # Display the message in a game window on notify.
   #-----------------------------------------------------------------------------
   def manager_changed_level(manager, value, data_id)
-    name, lv = manager.name, manager.lv
     $game_message.new_page
     lv_name = ::Kendrick::Data_Levels::LevelName
-    message = sprintf(::Vocab::LevelUp, name, lv_name, lv)
+    message = sprintf(::Vocab::LevelUp, manager.name, lv_name, value)
     $game_message.add(message)
   end
   
