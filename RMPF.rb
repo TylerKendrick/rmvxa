@@ -2,7 +2,7 @@
 #===============================================================================
 Author:     Tyler Kendrick
 Title:      Rpg Maker Presentation Foundation
-Version:    v0.0.1
+Version:    v0.0.3
 
 Language:   RGSS3
 Framework:  RPG Maker VX Ace
@@ -10,7 +10,7 @@ Git:        https://github.com/TylerKendrick/rmvxa
 --------------------------------------------------------------------------------
 =end
 $imported ||= {}
-$imported["Kendrick::RMPF"] = "v0.0.1"
+$imported["Kendrick::RMPF"] = "v0.0.3"
 #===============================================================================
 # Note: Need to register objects for core script setup.
 #===============================================================================
@@ -51,6 +51,25 @@ module Kendrick::RMPF
     end # ::Kendrick::RMPF::Binding::Path
   end # ::Kendrick::RMPF::Binding
   
-  class Style;      end
-  class Control;    end
+  class Style      
+    attr_reader :params
+    attr_reader :type
+    
+    def initialize(type, params = {})
+      @type = type
+      @params = params
+    end
+  end # ::Kendrick::RMPF::Style
+  
+  class Control
+    
+    def bind(name, binding)
+      bindings << binding.subscribe { |old_value, new_value|
+        self.send(name.to_s, new_value) if(old_value != new_value)
+      }
+    end
+    
+    private 
+    def bindings; @bindings ||= []; end
+  end # ::Kendrick::RMPF::Control
 end # ::Kendrick::RMPF
