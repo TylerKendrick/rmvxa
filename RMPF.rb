@@ -29,7 +29,7 @@ module Kendrick::RMPF
   
     private
     def on_change(name, old_value, new_value)
-      notify(@value, eval(@context)) if path[1] == name
+      notify(@value, eval(@context)) if path.params[1] == name
     end
 
     def eval
